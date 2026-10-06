@@ -34,6 +34,7 @@ namespace cfg {
     constexpr float    DAC_VREF        = 3.30f;   // MCP4725 output range
     constexpr float    THROTTLE_IDLE_V = 0.80f;   // "no drive" resting voltage
     constexpr float    THROTTLE_MAX_V  = 3.30f;   // full throttle voltage
+    constexpr float    COMMAND_CEILING = 0.75f;   // independent vehicle safety cap
 
     constexpr uint32_t CONTROL_PERIOD_MS = 10;    // 100 Hz control/DAC update
     constexpr uint32_t STATUS_PERIOD_MS  = 100;   // 10 Hz status TX
@@ -174,6 +175,9 @@ static void handleCan() {
         if (dbw_unpack_cmd(msg, DBW_ID_THROTTLE_CMD, rx, p, 3)) {
             cmd_estop    = (p[0] != 0u);
             cmd_throttle = clamp01((float)p[1] / 255.0f);
+            if (cmd_throttle > cfg::COMMAND_CEILING) {
+                cmd_throttle = cfg::COMMAND_CEILING;
+            }
             cmd_gear     = gearFromChar((char)p[2]);
             last_valid_cmd_ms = millis();
         }

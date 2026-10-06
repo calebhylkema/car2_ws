@@ -33,7 +33,7 @@ from teensy_serial import VehicleActuator
 
 
 DEFAULT_SPEED_LEVELS = (0.32, 0.40, 0.55, 0.75)
-DEFAULT_STEER_TRIM = 0.10
+DEFAULT_STEER_TRIM = 0.0
 GEAR_CODES = {"N": 0, "D": 1, "R": 3}
 
 
@@ -312,7 +312,7 @@ def main():
                         help="four increasing normalized throttle levels")
     parser.add_argument("--steer-step", type=float, default=0.25)
     parser.add_argument("--steer-trim", type=float, default=DEFAULT_STEER_TRIM,
-                        help="normalized steering center trim; default 0.10 for this car")
+                        help="temporary steering trim override; firmware owns the car's center correction")
     parser.add_argument("--direction-change-brake", type=float, default=1.0,
                         help="minimum full-brake Neutral guard before changing direction")
     args = parser.parse_args()

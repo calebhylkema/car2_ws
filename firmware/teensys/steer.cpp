@@ -47,6 +47,7 @@ namespace cfg {
     constexpr long     STEPS_LEFT  = -9000;   // ESTIMATE (recalibrate) -- limits protect the ends
     constexpr long     STEPS_RIGHT =  9000;   // ESTIMATE (recalibrate)
     constexpr long     STEP_BAND   =  10;
+    constexpr float    CENTER_TRIM = 0.10f;   // tested car2 center correction
 
     constexpr int      ENC_CENTER_LOW  = 900;
     constexpr int      ENC_CENTER_HIGH = 910;
@@ -121,9 +122,10 @@ static void setEnergized(bool en) {
 }
 
 static long setpointToSteps(float sp) {
-    long target = (sp < 0.0f)
-                    ? (long)(sp * (float)(-cfg::STEPS_LEFT))
-                    : (long)(sp * (float)cfg::STEPS_RIGHT);
+    const float trimmed = clamp11(sp + cfg::CENTER_TRIM);
+    long target = (trimmed < 0.0f)
+                    ? (long)(trimmed * (float)(-cfg::STEPS_LEFT))
+                    : (long)(trimmed * (float)cfg::STEPS_RIGHT);
     if (target < cfg::STEPS_LEFT)  target = cfg::STEPS_LEFT;
     if (target > cfg::STEPS_RIGHT) target = cfg::STEPS_RIGHT;
     return target;

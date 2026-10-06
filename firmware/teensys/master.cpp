@@ -25,6 +25,11 @@ namespace cfg {
     constexpr uint32_t TELEM_PERIOD_MS    = 100;   // 10 Hz telemetry
     constexpr uint32_t WATCHDOG_MS        = 500;   // PC comms timeout -> estop
     constexpr float    BRAKE_INTERLOCK    = 0.05f; // brake above this zeroes throttle
+    constexpr float    THROTTLE_CEILING   = 0.75f; // vehicle-wide maximum command
+    constexpr float    RELEASE_THRESHOLD  = 0.01f; // released accelerator command
+    constexpr float    FULL_BRAKE_LEVEL   = 0.95f;
+    constexpr uint32_t DIRECTION_GUARD_MS = 1000;  // Neutral + brake dwell
+    constexpr uint32_t THROTTLE_STATUS_TIMEOUT_MS = 300;
 }
 
 // ------------------------------- Globals ---------------------------------
@@ -44,6 +49,7 @@ static uint8_t seq_thr = 0, seq_steer = 0, seq_brake = 0;
 // Node feedback (relayed to telemetry)
 static uint8_t fb_thr_gear   = 0;
 static int16_t fb_thr_vcenti = 0;
+static uint32_t fb_thr_status_ms = 0;
 static int8_t  fb_steer_pct  = 0;
 static uint8_t fb_steer_homed = 0;
 static uint8_t fb_steer_flags = 0;
@@ -53,6 +59,17 @@ static uint8_t fb_brake_flags = 0;
 // Watchdog
 static uint32_t g_last_cmd = 0;
 static bool     g_wd_active = false;
+
+// Embedded D<->R guard. This remains active for every command source that uses
+// the master, even when the PC-side teleop is replaced.
+static bool     g_dir_guard_active = false;
+static char     g_dir_guard_target = 'N';
+static char     g_last_motion_gear = 'N';
+static char     g_guard_bypass_gear = 'N';
+static bool     g_dir_release_seen = false;
+static bool     g_neutral_brake_satisfied = false;
+static uint32_t g_dir_guard_started_ms = 0;
+static uint32_t g_neutral_brake_started_ms = 0;
 
 // ------------------------------- Helpers ---------------------------------
 static inline float clamp01(float v) { return (v < 0.0f) ? 0.0f : (v > 1.0f ? 1.0f : v); }
@@ -64,23 +81,173 @@ static int8_t  toI8(float v) {
     return (int8_t)(s + (s >= 0.0f ? 0.5f : -0.5f));
 }
 
+static bool isDirectionGear(char mode) { return mode == 'D' || mode == 'R'; }
+
+static char feedbackGearChar() {
+    switch (fb_thr_gear) {
+        case 1: return 'D';
+        case 2: return 'S';
+        case 3: return 'R';
+        default: return 'N';
+    }
+}
+
+static bool throttleFeedbackFresh(uint32_t now) {
+    return fb_thr_status_ms != 0u &&
+           now - fb_thr_status_ms <= cfg::THROTTLE_STATUS_TIMEOUT_MS;
+}
+
+static bool feedbackMatches(char mode) {
+    return feedbackGearChar() == mode;
+}
+
+static void startDirectionGuard(char target, uint32_t now) {
+    g_dir_guard_active = true;
+    g_dir_guard_target = target;
+    g_dir_release_seen = false;
+    g_dir_guard_started_ms = now;
+    g_guard_bypass_gear = 'N';
+}
+
+static void resetDirectionGuard() {
+    g_dir_guard_active = false;
+    g_dir_guard_target = 'N';
+    g_dir_release_seen = false;
+    g_dir_guard_started_ms = 0;
+    g_guard_bypass_gear = 'N';
+    g_neutral_brake_satisfied = false;
+    g_neutral_brake_started_ms = 0;
+}
+
 // ---------------------------- CAN command TX -----------------------------
 static void sendCommands() {
+    const uint32_t now = millis();
+    float eff_throttle = clamp01(g_throttle);
+    float eff_brake = clamp01(g_brake);
+    char eff_mode = g_mode;
+
     if (g_estop) {
-        g_throttle = 0.0f;
-        g_brake    = 1.0f;
-        g_mode     = 'N';
+        eff_throttle = 0.0f;
+        eff_brake = 1.0f;
+        eff_mode = 'N';
+        resetDirectionGuard();
+    } else {
+        const bool feedback_fresh = throttleFeedbackFresh(now);
+        const char actual_gear = feedbackGearChar();
+
+        if (feedback_fresh && isDirectionGear(actual_gear)) {
+            if (actual_gear != g_last_motion_gear) {
+                g_last_motion_gear = actual_gear;
+                g_neutral_brake_satisfied = false;
+                g_neutral_brake_started_ms = 0;
+            }
+            if (g_guard_bypass_gear == actual_gear) {
+                g_guard_bypass_gear = 'N';
+            }
+        }
+
+        // Recognize a completed PC-side guard so the embedded guard does not
+        // add a second delay after Neutral + full brake has already been held.
+        const bool neutral_brake_commanded =
+            g_mode == 'N' && g_throttle <= cfg::RELEASE_THRESHOLD &&
+            g_brake >= cfg::FULL_BRAKE_LEVEL;
+        if (neutral_brake_commanded) {
+            if (g_neutral_brake_started_ms == 0u) {
+                g_neutral_brake_started_ms = now;
+            }
+            if (now - g_neutral_brake_started_ms >= cfg::DIRECTION_GUARD_MS &&
+                feedback_fresh && actual_gear == 'N') {
+                g_neutral_brake_satisfied = true;
+            }
+        } else if (g_mode == 'N') {
+            g_neutral_brake_started_ms = 0;
+            g_neutral_brake_satisfied = false;
+        }
+
+        if (g_guard_bypass_gear != 'N' && g_mode != g_guard_bypass_gear) {
+            g_guard_bypass_gear = 'N';
+        }
+
+        if (!g_dir_guard_active && isDirectionGear(g_mode) &&
+            isDirectionGear(g_last_motion_gear) &&
+            g_mode != g_last_motion_gear &&
+            g_guard_bypass_gear != g_mode) {
+            if (g_neutral_brake_satisfied) {
+                g_guard_bypass_gear = g_mode;
+                g_neutral_brake_satisfied = false;
+                g_neutral_brake_started_ms = 0;
+            } else {
+                startDirectionGuard(g_mode, now);
+            }
+        }
+
+        bool hold_for_guard = false;
+        if (g_dir_guard_active) {
+            // Returning to the previous direction cancels the requested swap.
+            if (g_mode == g_last_motion_gear) {
+                g_dir_guard_active = false;
+                g_dir_guard_target = 'N';
+                g_dir_release_seen = false;
+            } else {
+                if (isDirectionGear(g_mode) && g_mode != g_dir_guard_target) {
+                    startDirectionGuard(g_mode, now);
+                }
+
+                const bool released_now =
+                    g_mode == 'N' || g_throttle <= cfg::RELEASE_THRESHOLD;
+                if (released_now) {
+                    g_dir_release_seen = true;
+                }
+
+                const bool guard_complete =
+                    now - g_dir_guard_started_ms >= cfg::DIRECTION_GUARD_MS &&
+                    g_dir_release_seen && released_now && feedback_fresh &&
+                    actual_gear == 'N';
+
+                hold_for_guard = true;
+                if (guard_complete) {
+                    g_dir_guard_active = false;
+                    if (g_mode == g_dir_guard_target && isDirectionGear(g_mode)) {
+                        g_guard_bypass_gear = g_mode;
+                    } else {
+                        g_neutral_brake_satisfied = true;
+                    }
+                    g_dir_guard_target = 'N';
+                    g_dir_release_seen = false;
+                }
+            }
+        }
+
+        if (hold_for_guard) {
+            eff_throttle = 0.0f;
+            eff_brake = 1.0f;
+            eff_mode = 'N';
+        } else {
+            if (eff_throttle > cfg::THROTTLE_CEILING) {
+                eff_throttle = cfg::THROTTLE_CEILING;
+            }
+            if (eff_mode == 'N') {
+                eff_throttle = 0.0f;
+            } else if (!feedback_fresh || !feedbackMatches(eff_mode)) {
+                // Gear commands may proceed, but torque waits for fresh proof
+                // that the throttle node has reached the requested gear.
+                eff_throttle = 0.0f;
+            }
+        }
     }
+
     // Plausibility interlock: a real brake command cancels throttle.
-    const float eff_throttle = (g_brake > cfg::BRAKE_INTERLOCK) ? 0.0f : g_throttle;
+    if (eff_brake > cfg::BRAKE_INTERLOCK) {
+        eff_throttle = 0.0f;
+    }
 
     CAN_message_t m;
 
-    uint8_t thr[3] = { (uint8_t)(g_estop ? 1u : 0u), toU8(eff_throttle), (uint8_t)g_mode };
+    uint8_t thr[3] = { (uint8_t)(g_estop ? 1u : 0u), toU8(eff_throttle), (uint8_t)eff_mode };
     dbw_pack_cmd(m, DBW_ID_THROTTLE_CMD, seq_thr, thr, 3);
     can.write(m);
 
-    uint8_t brk[2] = { (uint8_t)(g_estop ? 1u : 0u), toU8(g_brake) };
+    uint8_t brk[2] = { (uint8_t)(g_estop ? 1u : 0u), toU8(eff_brake) };
     dbw_pack_cmd(m, DBW_ID_BRAKE_CMD, seq_brake, brk, 2);
     can.write(m);
 
@@ -99,6 +266,7 @@ static void handleStatus() {
                 if (msg.len >= 6) {
                     fb_thr_gear   = msg.buf[2];
                     fb_thr_vcenti = (int16_t)(msg.buf[4] | ((uint16_t)msg.buf[5] << 8));
+                    fb_thr_status_ms = millis();
                 }
                 break;
             case DBW_ID_STEER_STAT:

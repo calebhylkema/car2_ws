@@ -10,8 +10,13 @@ Controls:
   C               center steering
   Space           hold full brake
   Q               toggle Neutral / active driving
+  G               toggle Drive / Sport for forward motion
   E               toggle E-STOP
   Esc             safe stop and quit
+
+The controller starts in E-STOP. Press E to clear E-STOP, then Q to enable
+driving. Speed levels 3 and 4 start at level 2 and rise at a configurable,
+time-based throttle rate instead of stepping directly to the selected level.
 
 Throttle is inhibited until telemetry confirms the requested gear. A direction
 change commands Neutral and full brake, requires W/S to be released, waits for
@@ -33,8 +38,10 @@ from teensy_serial import VehicleActuator
 
 
 DEFAULT_SPEED_LEVELS = (0.32, 0.40, 0.55, 0.75)
-DEFAULT_STEER_TRIM = 0.0
-GEAR_CODES = {"N": 0, "D": 1, "R": 3}
+DEFAULT_STEER_TRIM = -0.40
+MAX_STEER_TRIM = 0.50
+DEFAULT_HIGH_SPEED_RAMP_RATE = 0.10
+GEAR_CODES = {"N": 0, "D": 1, "S": 2, "R": 3}
 
 
 def clamp(value, low, high):
@@ -55,23 +62,35 @@ def parse_speed_levels(value):
     return levels
 
 
+def positive_float(value):
+    try:
+        number = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("value must be a decimal number") from exc
+    if number <= 0.0:
+        raise argparse.ArgumentTypeError("value must be greater than zero")
+    return number
+
+
 class WasdTeleop:
     def __init__(self, actuator, rate_hz, throttle_scale, speed_levels, steer_step,
-                 steer_trim, direction_change_brake_s):
+                 steer_trim, direction_change_brake_s, high_speed_ramp_rate):
         self.act = actuator
         self.period = 1.0 / rate_hz
         self.throttle_scale = throttle_scale
         self.speed_levels = dict(zip(("1", "2", "3", "4"), speed_levels))
         self.steer_step = steer_step
-        self.steer_trim = clamp(steer_trim, -0.25, 0.25)
+        self.steer_trim = clamp(steer_trim, -MAX_STEER_TRIM, MAX_STEER_TRIM)
         self.direction_change_brake_s = max(0.5, direction_change_brake_s)
+        self.high_speed_ramp_rate = high_speed_ramp_rate
 
         self._lock = threading.Lock()
         self._pressed = set()
         self._running = True
 
-        self.estop = False
+        self.estop = True
         self.drive_enabled = False
+        self.sport_enabled = False
         self.level = self.speed_levels["1"]
         self.steer = 0.0
         self.commanded_mode = "N"
@@ -79,8 +98,13 @@ class WasdTeleop:
         self.guard_until = 0.0
         self.guard_release_seen = False
         self.preselect_drive = False
-        self.drive_state = "NEUTRAL"
+        self.drive_state = "ESTOP"
         self.telem = {}
+
+        self.ramp_command = 0.0
+        self.ramp_last_at = None
+        self.ramp_gear = None
+        self.ramp_active = False
 
     @staticmethod
     def _key_id(key):
@@ -100,20 +124,36 @@ class WasdTeleop:
                 self.level = self.speed_levels[key_id]
             elif key_id == "e":
                 self.estop = not self.estop
+                self.drive_enabled = False
+                self.commanded_mode = "N"
+                self.preselect_drive = False
+                self.guard_until = 0.0
+                self._reset_high_speed_ramp()
+                if self.estop:
+                    self.drive_state = "ESTOP"
+                else:
+                    self.drive_state = "NEUTRAL"
+            elif key_id == "q":
                 if self.estop:
                     self.drive_enabled = False
-                    self.commanded_mode = "N"
-                    self.guard_until = 0.0
                     self.drive_state = "ESTOP"
-            elif key_id == "q":
+                    return
                 self.drive_enabled = not self.drive_enabled
                 if self.drive_enabled:
                     self.preselect_drive = True
-                    self.drive_state = "SELECTING DRIVE"
+                    self.drive_state = f"SELECTING {self._forward_mode_name()}"
                 else:
                     self.commanded_mode = "N"
                     self.preselect_drive = False
+                    self._reset_high_speed_ramp()
                     self.drive_state = "NEUTRAL"
+            elif key_id == "g":
+                self.sport_enabled = not self.sport_enabled
+                self._reset_high_speed_ramp()
+                if self.drive_enabled and self.commanded_mode in ("D", "S"):
+                    self.commanded_mode = self._forward_mode()
+                    self.preselect_drive = False
+                    self.drive_state = f"SELECTING {self._forward_mode_name()}"
             elif key_id == "c":
                 self.steer = 0.0
             elif key_id == keyboard.Key.esc:
@@ -130,7 +170,59 @@ class WasdTeleop:
         except (KeyError, TypeError, ValueError):
             return None
 
+    def _forward_mode(self):
+        return "S" if self.sport_enabled else "D"
+
+    def _forward_mode_name(self):
+        return "SPORT" if self.sport_enabled else "DRIVE"
+
+    @staticmethod
+    def _motion_direction(mode):
+        if mode in ("D", "S"):
+            return "F"
+        if mode == "R":
+            return "R"
+        return "N"
+
+    @staticmethod
+    def _gear_from_code(code):
+        for gear, gear_code in GEAR_CODES.items():
+            if code == gear_code:
+                return gear
+        return None
+
+    def _reset_high_speed_ramp(self):
+        self.ramp_command = 0.0
+        self.ramp_last_at = None
+        self.ramp_gear = None
+        self.ramp_active = False
+
+    def _apply_high_speed_ramp(self, now, gear, target):
+        level_two = self.speed_levels["2"] * self.throttle_scale
+        if target <= level_two:
+            self._reset_high_speed_ramp()
+            return target
+
+        if self.ramp_last_at is None or self.ramp_gear != gear:
+            self.ramp_command = min(level_two, target)
+            self.ramp_last_at = now
+            self.ramp_gear = gear
+        else:
+            elapsed = max(0.0, now - self.ramp_last_at)
+            self.ramp_last_at = now
+            if target <= self.ramp_command:
+                self.ramp_command = target
+            else:
+                self.ramp_command = min(
+                    target,
+                    self.ramp_command + self.high_speed_ramp_rate * elapsed,
+                )
+
+        self.ramp_active = self.ramp_command < target
+        return self.ramp_command
+
     def _start_direction_guard(self, now):
+        self._reset_high_speed_ramp()
         self.commanded_mode = "N"
         self.preselect_drive = False
         self.guard_until = now + self.direction_change_brake_s
@@ -141,10 +233,12 @@ class WasdTeleop:
         actual_gear = self._actual_gear()
 
         if self.estop:
+            self._reset_high_speed_ramp()
             self.drive_state = "ESTOP"
             return 0.0, "N", 1.0
 
         if not self.drive_enabled:
+            self._reset_high_speed_ramp()
             self.commanded_mode = "N"
             self.drive_state = "NEUTRAL"
             return 0.0, "N", brake
@@ -167,16 +261,21 @@ class WasdTeleop:
                 self.drive_state = "READY"
             else:
                 self.drive_state = "DIRECTION GUARD"
+            self._reset_high_speed_ramp()
             return 0.0, "N", 1.0
 
         if self.preselect_drive and not forward and not reverse:
-            if self.last_motion_gear == "R" or actual_gear == GEAR_CODES["R"]:
+            target = self._forward_mode()
+            actual_mode = self._gear_from_code(actual_gear)
+            if (self._motion_direction(self.last_motion_gear) == "R" or
+                    self._motion_direction(actual_mode) == "R"):
                 self._start_direction_guard(now)
                 return 0.0, "N", 1.0
-            if actual_gear in (GEAR_CODES["N"], GEAR_CODES["D"]):
-                self.commanded_mode = "D"
+            if actual_gear in (GEAR_CODES["N"], GEAR_CODES["D"], GEAR_CODES["S"]):
+                self.commanded_mode = target
                 self.preselect_drive = False
             else:
+                self._reset_high_speed_ramp()
                 self.drive_state = "WAIT-TELEMETRY"
                 return 0.0, "N", brake
 
@@ -185,22 +284,35 @@ class WasdTeleop:
             return 0.0, "N", 1.0
 
         if forward or reverse:
-            requested = "D" if forward else "R"
+            requested = self._forward_mode() if forward else "R"
             self.preselect_drive = False
-            opposite = "R" if requested == "D" else "D"
-            if self.last_motion_gear == opposite or actual_gear == GEAR_CODES[opposite]:
+            requested_direction = self._motion_direction(requested)
+            actual_mode = self._gear_from_code(actual_gear)
+            last_direction = self._motion_direction(self.last_motion_gear)
+            actual_direction = self._motion_direction(actual_mode)
+            if ((last_direction != "N" and last_direction != requested_direction) or
+                    (actual_direction != "N" and actual_direction != requested_direction)):
                 self._start_direction_guard(now)
                 return 0.0, "N", 1.0
 
             self.commanded_mode = requested
             if actual_gear == GEAR_CODES[requested]:
                 self.last_motion_gear = requested
-                self.drive_state = "FORWARD" if requested == "D" else "REVERSE"
-                throttle = self.level * self.throttle_scale
+                target = self.level * self.throttle_scale
+                throttle = self._apply_high_speed_ramp(now, requested, target)
+                if self.ramp_active:
+                    self.drive_state = f"RAMP-{requested}"
+                else:
+                    if requested == "S":
+                        self.drive_state = "SPORT"
+                    else:
+                        self.drive_state = "FORWARD" if requested == "D" else "REVERSE"
             else:
+                self._reset_high_speed_ramp()
                 self.drive_state = f"WAIT-{requested}"
                 throttle = 0.0
         else:
+            self._reset_high_speed_ramp()
             throttle = 0.0
             if self.commanded_mode in GEAR_CODES:
                 if actual_gear == GEAR_CODES[self.commanded_mode]:
@@ -211,6 +323,7 @@ class WasdTeleop:
                 self.drive_state = "READY"
 
         if brake > 0.0:
+            self._reset_high_speed_ramp()
             throttle = 0.0
             self.drive_state = "BRAKE"
 
@@ -252,6 +365,7 @@ class WasdTeleop:
             )
         sys.stdout.write(
             f"\r[{tag}] state={self.drive_state:<15} mode={mode} lvl={self.level:.2f} "
+            f"sport={'ON' if self.sport_enabled else 'OFF'} "
             f"thr={throttle:4.2f} str={steer:+4.2f} brk={brake:3.1f}{car}      "
         )
         sys.stdout.flush()
@@ -292,12 +406,21 @@ class WasdTeleop:
 
     def shutdown(self):
         self._running = False
-        time.sleep(self.period * 2)
-        try:
-            self.act.send_all(estop=True, throttle=0.0, mode="N", brake=1.0, steer=0.0)
-            self.act.estop(True)
-        except Exception:
-            pass
+        # Repeat the final safe state so a single USB write cannot strand the
+        # car active. The master latches E-stop, and its watchdog independently
+        # enters E-stop if the process or PC disappears before cleanup runs.
+        for _ in range(5):
+            try:
+                self.act.send_all(
+                    estop=True,
+                    throttle=0.0,
+                    mode="N",
+                    brake=1.0,
+                    steer=self.steer_trim,
+                )
+            except Exception:
+                break
+            time.sleep(0.05)
 
 
 def main():
@@ -312,9 +435,12 @@ def main():
                         help="four increasing normalized throttle levels")
     parser.add_argument("--steer-step", type=float, default=0.25)
     parser.add_argument("--steer-trim", type=float, default=DEFAULT_STEER_TRIM,
-                        help="temporary steering trim override; firmware owns the car's center correction")
+                        help="temporary override for the installed steering-center correction")
     parser.add_argument("--direction-change-brake", type=float, default=1.0,
                         help="minimum full-brake Neutral guard before changing direction")
+    parser.add_argument("--high-speed-ramp-rate", type=positive_float,
+                        default=DEFAULT_HIGH_SPEED_RAMP_RATE,
+                        help="normalized throttle increase per second above speed level 2")
     args = parser.parse_args()
 
     print(f"Connecting to {args.port} @ {args.baud} ...")
@@ -327,6 +453,7 @@ def main():
         steer_step=args.steer_step,
         steer_trim=args.steer_trim,
         direction_change_brake_s=args.direction_change_brake,
+        high_speed_ramp_rate=args.high_speed_ramp_rate,
     )
     try:
         teleop.run()

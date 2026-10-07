@@ -1,0 +1,3 @@
+firmware/teensys/.pio/
+teleop/__pycache__/
+*.py[cod]

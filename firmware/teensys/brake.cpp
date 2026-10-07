@@ -10,27 +10,30 @@
 //   - fail-safe (estop / stale command / rejected frame) = FULL brake applied
 //   - command frames validated by the shared E2E layer (dbw_can.h)
 //
-// Hardware truth (unchanged): H-bridge RPWM=19 (extend/apply), LPWM=18 (retract/
-// release); position feedback on A0; calibration minADC=300 (released) ..
-// maxADC=430 (fully applied); stroke 2.0 in. Fail-safe direction = extend.
+// Measured installed hardware: pin 19 retracts/releases, pin 18 extends/applies,
+// and position feedback on A0 decreases as the actuator extends. The measured
+// endpoints are 945 released and 745 at the installed mechanical apply limit;
+// normal control stops at 755 to retain a small apply-side safety margin.
 
 #include <Arduino.h>
 #include "dbw_can.h"
 
 // ----------------------------- Configuration -----------------------------
 namespace cfg {
-    constexpr uint8_t  PIN_RPWM = 19;   // extend  (apply brake)
-    constexpr uint8_t  PIN_LPWM = 18;   // retract (release brake)
-    constexpr uint8_t  PIN_FBK  = A0;   // position feedback
+    constexpr uint8_t  PIN_RETRACT = 19; // retract actuator, release brake
+    constexpr uint8_t  PIN_EXTEND  = 18; // extend actuator, apply brake
+    constexpr uint8_t  PIN_FBK     = A0; // potentiometer wiper
 
-    constexpr int      ADC_RELEASED = 300;   // raw at full retract (brake off)
-    constexpr int      ADC_APPLIED  = 430;   // raw at full extend  (brake on)
+    constexpr int      ADC_RELEASED = 945;   // measured full retract / brake off
+    constexpr int      ADC_APPLIED_LIMIT = 745; // installed mechanical maximum
+    constexpr int      ADC_APPLIED  = 755;   // commanded maximum with 10-count margin
     constexpr float    STROKE_IN     = 2.0f; // for status reporting only
 
     constexpr int      DEADBAND_ADC  = 4;    // stop band around target
     constexpr float    KP            = 6.0f; // PWM per ADC count of error
     constexpr uint8_t  PWM_MIN       = 70;   // break-away duty (overcome stiction)
     constexpr uint8_t  PWM_MAX       = 255;  // full duty
+    constexpr float    PWM_FREQUENCY_HZ = 20000.0f; // above audible range
     constexpr float    FBK_ALPHA     = 0.30f;// EMA smoothing factor
 
     constexpr uint32_t CONTROL_PERIOD_MS = 5;    // 200 Hz control loop
@@ -64,17 +67,17 @@ static inline float clamp01(float v) { return (v < 0.0f) ? 0.0f : (v > 1.0f ? 1.
 
 static void driveMotor(uint8_t magnitude, bool extend) {
     if (extend) {
-        analogWrite(cfg::PIN_RPWM, magnitude);
-        analogWrite(cfg::PIN_LPWM, 0);
+        analogWrite(cfg::PIN_RETRACT, 0);
+        analogWrite(cfg::PIN_EXTEND, magnitude);
     } else {
-        analogWrite(cfg::PIN_RPWM, 0);
-        analogWrite(cfg::PIN_LPWM, magnitude);
+        analogWrite(cfg::PIN_EXTEND, 0);
+        analogWrite(cfg::PIN_RETRACT, magnitude);
     }
 }
 
 static void stopMotor() {
-    analogWrite(cfg::PIN_RPWM, 0);
-    analogWrite(cfg::PIN_LPWM, 0);
+    analogWrite(cfg::PIN_RETRACT, 0);
+    analogWrite(cfg::PIN_EXTEND, 0);
 }
 
 // ------------------------------ Control ----------------------------------
@@ -89,7 +92,7 @@ static void controlStep() {
     const float targetADC =
         (float)cfg::ADC_RELEASED + (float)(cfg::ADC_APPLIED - cfg::ADC_RELEASED) * target;
 
-    const float error = targetADC - fbk_filt;   // >0 -> need to extend (apply)
+    const float error = targetADC - fbk_filt;
 
     if (fabsf(error) <= (float)cfg::DEADBAND_ADC) {
         stopMotor();
@@ -104,7 +107,8 @@ static void controlStep() {
     if (mag > (float)cfg::PWM_MAX) mag = (float)cfg::PWM_MAX;
     pwm_mag = (uint8_t)mag;
 
-    const bool extend = (error > 0.0f);
+    // Feedback decreases as the actuator extends, so a negative error applies.
+    const bool extend = (error < 0.0f);
     driveMotor(pwm_mag, extend);
     motion = extend ? MOTION_EXTEND : MOTION_RETRACT;
 }
@@ -135,8 +139,8 @@ static void sendStatus() {
     const int16_t lenCenti = (int16_t)lroundf(inches * 100.0f);
 
     uint8_t flags = 0u;
-    if (raw <= cfg::ADC_RELEASED + cfg::DEADBAND_ADC) flags |= 0x01u;  // near released
-    if (raw >= cfg::ADC_APPLIED  - cfg::DEADBAND_ADC) flags |= 0x02u;  // near applied
+    if (raw >= cfg::ADC_RELEASED - cfg::DEADBAND_ADC) flags |= 0x01u;  // near released
+    if (raw <= cfg::ADC_APPLIED  + cfg::DEADBAND_ADC) flags |= 0x02u;  // near applied
     if (stale)     flags |= 0x04u;
     if (cmd_estop) flags |= 0x08u;
 
@@ -185,9 +189,12 @@ static void runBrakeCal(uint32_t now) {
 void setup() {
     Serial.begin(115200);
 
-    pinMode(cfg::PIN_RPWM, OUTPUT);
-    pinMode(cfg::PIN_LPWM, OUTPUT);
+    pinMode(cfg::PIN_RETRACT, OUTPUT);
+    pinMode(cfg::PIN_EXTEND, OUTPUT);
     pinMode(cfg::PIN_FBK, INPUT);
+    analogWriteResolution(8);
+    analogWriteFrequency(cfg::PIN_RETRACT, cfg::PWM_FREQUENCY_HZ);
+    analogWriteFrequency(cfg::PIN_EXTEND, cfg::PWM_FREQUENCY_HZ);
     analogReadResolution(10);
     stopMotor();
 

@@ -47,7 +47,7 @@ namespace cfg {
     constexpr long     STEPS_LEFT  = -9000;   // ESTIMATE (recalibrate) -- limits protect the ends
     constexpr long     STEPS_RIGHT =  9000;   // ESTIMATE (recalibrate)
     constexpr long     STEP_BAND   =  10;
-    constexpr float    CENTER_TRIM = 0.10f;   // tested car2 center correction
+    constexpr float    CENTER_TRIM = 0.00f;   // correction is owned by teleop
 
     constexpr int      ENC_CENTER_LOW  = 900;
     constexpr int      ENC_CENTER_HIGH = 910;
@@ -320,6 +320,8 @@ void setup() {
     last_valid_cmd_ms = millis();
     Serial.print("STEER node up @ 250k  MOTION=");
     Serial.println(cfg::MOTION_ENABLED ? "ENABLED" : "DISABLED (diagnostic)");
+    Serial.print("CENTER_TRIM=");
+    Serial.println(cfg::CENTER_TRIM, 2);
 }
 
 void loop() {

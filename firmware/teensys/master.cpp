@@ -36,10 +36,10 @@ namespace cfg {
 FlexCAN_T4<CAN1, RX_SIZE_256, TX_SIZE_16> can;
 
 // Commanded vehicle state
-static bool  g_estop    = false;
+static bool  g_estop    = true;   // power-up state is always E-stop
 static float g_throttle = 0.0f;
 static char  g_mode     = 'N';
-static float g_brake    = 0.0f;
+static float g_brake    = 1.0f;
 static float g_steer    = 0.0f;
 static bool  g_center   = false;
 
@@ -60,8 +60,8 @@ static uint8_t fb_brake_flags = 0;
 static uint32_t g_last_cmd = 0;
 static bool     g_wd_active = false;
 
-// Embedded D<->R guard. This remains active for every command source that uses
-// the master, even when the PC-side teleop is replaced.
+// Embedded D/S<->R guard. This remains active for every command source that
+// uses the master, even when the PC-side teleop is replaced.
 static bool     g_dir_guard_active = false;
 static char     g_dir_guard_target = 'N';
 static char     g_last_motion_gear = 'N';
@@ -81,7 +81,20 @@ static int8_t  toI8(float v) {
     return (int8_t)(s + (s >= 0.0f ? 0.5f : -0.5f));
 }
 
-static bool isDirectionGear(char mode) { return mode == 'D' || mode == 'R'; }
+static int8_t motionDirection(char mode) {
+    if (mode == 'D' || mode == 'S') return 1;
+    if (mode == 'R') return -1;
+    return 0;
+}
+
+static bool isMotionGear(char mode) { return motionDirection(mode) != 0; }
+
+static bool isDirectionReversal(char from, char to) {
+    const int8_t from_direction = motionDirection(from);
+    const int8_t to_direction = motionDirection(to);
+    return from_direction != 0 && to_direction != 0 &&
+           from_direction != to_direction;
+}
 
 static char feedbackGearChar() {
     switch (fb_thr_gear) {
@@ -135,7 +148,7 @@ static void sendCommands() {
         const bool feedback_fresh = throttleFeedbackFresh(now);
         const char actual_gear = feedbackGearChar();
 
-        if (feedback_fresh && isDirectionGear(actual_gear)) {
+        if (feedback_fresh && isMotionGear(actual_gear)) {
             if (actual_gear != g_last_motion_gear) {
                 g_last_motion_gear = actual_gear;
                 g_neutral_brake_satisfied = false;
@@ -168,9 +181,8 @@ static void sendCommands() {
             g_guard_bypass_gear = 'N';
         }
 
-        if (!g_dir_guard_active && isDirectionGear(g_mode) &&
-            isDirectionGear(g_last_motion_gear) &&
-            g_mode != g_last_motion_gear &&
+        if (!g_dir_guard_active &&
+            isDirectionReversal(g_last_motion_gear, g_mode) &&
             g_guard_bypass_gear != g_mode) {
             if (g_neutral_brake_satisfied) {
                 g_guard_bypass_gear = g_mode;
@@ -184,12 +196,14 @@ static void sendCommands() {
         bool hold_for_guard = false;
         if (g_dir_guard_active) {
             // Returning to the previous direction cancels the requested swap.
-            if (g_mode == g_last_motion_gear) {
+            if (isMotionGear(g_mode) &&
+                motionDirection(g_mode) == motionDirection(g_last_motion_gear)) {
                 g_dir_guard_active = false;
                 g_dir_guard_target = 'N';
                 g_dir_release_seen = false;
             } else {
-                if (isDirectionGear(g_mode) && g_mode != g_dir_guard_target) {
+                if (isMotionGear(g_mode) &&
+                    motionDirection(g_mode) != motionDirection(g_dir_guard_target)) {
                     startDirectionGuard(g_mode, now);
                 }
 
@@ -207,7 +221,8 @@ static void sendCommands() {
                 hold_for_guard = true;
                 if (guard_complete) {
                     g_dir_guard_active = false;
-                    if (g_mode == g_dir_guard_target && isDirectionGear(g_mode)) {
+                    if (isMotionGear(g_mode) &&
+                        motionDirection(g_mode) == motionDirection(g_dir_guard_target)) {
                         g_guard_bypass_gear = g_mode;
                     } else {
                         g_neutral_brake_satisfied = true;

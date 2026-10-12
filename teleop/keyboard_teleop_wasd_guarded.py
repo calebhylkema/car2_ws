@@ -37,7 +37,7 @@ from pynput import keyboard
 from teensy_serial import VehicleActuator
 
 
-DEFAULT_SPEED_LEVELS = (0.32, 0.40, 0.55, 0.75)
+DEFAULT_SPEED_LEVELS = (0.21, 0.30, 0.50, 0.70)
 DEFAULT_STEER_TRIM = -0.40
 MAX_STEER_TRIM = 0.50
 DEFAULT_HIGH_SPEED_RAMP_RATE = 0.10

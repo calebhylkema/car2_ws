@@ -44,8 +44,8 @@ namespace cfg {
     constexpr uint32_t ENA_SETTLE_MS    = 250;    // CL57T: ENA must lead DIR ~200ms
 
     // ---- Travel (RE-MEASURE ON CAR2 -- these are old-car values) ----
-    constexpr long     STEPS_LEFT  = -9000;   // ESTIMATE (recalibrate) -- limits protect the ends
-    constexpr long     STEPS_RIGHT =  9000;   // ESTIMATE (recalibrate)
+    constexpr long     STEPS_LEFT  = -13500;  // expanded left travel; limits protect the end
+    constexpr long     STEPS_RIGHT =  16500;  // expanded right travel; limits protect the end
     constexpr long     STEP_BAND   =  10;
     constexpr float    CENTER_TRIM = 0.00f;   // correction is owned by teleop
 

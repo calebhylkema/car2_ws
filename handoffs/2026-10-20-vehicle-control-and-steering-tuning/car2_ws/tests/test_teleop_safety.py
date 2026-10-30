@@ -196,20 +196,20 @@ class TeleopSafety(unittest.TestCase):
                 self.assertAlmostEqual(self.app._apply_steering_input(11, direction), direction)
                 self.assertAlmostEqual(self.app._apply_steering_input(12, direction), direction)
 
-    def test_steering_returns_to_center_in_one_and_a_half_seconds(self):
+    def test_steering_returns_to_center_in_two_seconds(self):
         for direction in (-1, 1):
             with self.subTest(direction=direction):
                 self.app.steer = direction
                 self.app.steer_last_at = 10
-                self.assertAlmostEqual(self.app._apply_steering_input(10.75, 0), direction * 0.5)
-                self.assertAlmostEqual(self.app._apply_steering_input(11.5, 0), 0)
-                self.assertEqual(self.app._apply_steering_input(12, 0), 0)
+                self.assertAlmostEqual(self.app._apply_steering_input(11, 0), direction * 0.5)
+                self.assertAlmostEqual(self.app._apply_steering_input(12, 0), 0)
+                self.assertEqual(self.app._apply_steering_input(13, 0), 0)
 
     def test_short_steering_tap_makes_small_correction_then_returns(self):
         self.app._apply_steering_input(10, 1)
         self.assertAlmostEqual(self.app._apply_steering_input(10.1, 1), 0.1)
-        self.assertAlmostEqual(self.app._apply_steering_input(10.175, 0), 0.05)
-        self.assertAlmostEqual(self.app._apply_steering_input(10.25, 0), 0)
+        self.assertAlmostEqual(self.app._apply_steering_input(10.2, 0), 0.05)
+        self.assertAlmostEqual(self.app._apply_steering_input(10.3, 0), 0)
 
     def test_steering_direction_change_passes_through_center(self):
         self.app.steer = 1
@@ -259,26 +259,26 @@ class TeleopSafety(unittest.TestCase):
             self.assertEqual(call.kwargs["steer"], 0)
 
     def test_all_levels_start_at_zero_and_reach_their_targets(self):
-        for target, duration in zip(teleop.DEFAULT_SPEED_LEVELS, (1, 2, 16 / 3, 28 / 3)):
+        for target, duration in zip(teleop.DEFAULT_SPEED_LEVELS, (1.5, 3, 19 / 3, 31 / 3)):
             with self.subTest(target=target):
                 self.app._reset_high_speed_ramp()
                 self.assertEqual(self.app._apply_high_speed_ramp(10, "D", target), 0)
-                self.assertAlmostEqual(self.app._apply_high_speed_ramp(10.5, "D", target), 0.075)
+                self.assertAlmostEqual(self.app._apply_high_speed_ramp(10.5, "D", target), 0.05)
                 self.assertAlmostEqual(self.app._apply_high_speed_ramp(10 + duration, "D", target), target)
                 self.assertAlmostEqual(self.app._apply_high_speed_ramp(30, "D", target), target)
 
     def test_upper_ramp_rate_and_threshold_crossing(self):
         self.app._apply_high_speed_ramp(10, "D", 0.85)
-        self.assertAlmostEqual(self.app._apply_high_speed_ramp(11, "D", 0.85), 0.15)
-        self.assertAlmostEqual(self.app._apply_high_speed_ramp(12.5, "D", 0.85), 0.3375)
-        self.assertAlmostEqual(self.app._apply_high_speed_ramp(13.5, "D", 0.85), 0.4125)
+        self.assertAlmostEqual(self.app._apply_high_speed_ramp(11.5, "D", 0.85), 0.15)
+        self.assertAlmostEqual(self.app._apply_high_speed_ramp(13.5, "D", 0.85), 0.3375)
+        self.assertAlmostEqual(self.app._apply_high_speed_ramp(14.5, "D", 0.85), 0.4125)
 
     def test_upper_level_changes_take_three_to_five_seconds(self):
         self.app._apply_high_speed_ramp(10, "D", 0.30)
-        self.assertAlmostEqual(self.app._apply_high_speed_ramp(12, "D", 0.30), 0.30)
-        self.assertAlmostEqual(self.app._apply_high_speed_ramp(12, "D", 0.55), 0.30)
-        self.assertAlmostEqual(self.app._apply_high_speed_ramp(14, "D", 0.55), 0.45)
-        level_three_at = 12 + 10 / 3
+        self.assertAlmostEqual(self.app._apply_high_speed_ramp(13, "D", 0.30), 0.30)
+        self.assertAlmostEqual(self.app._apply_high_speed_ramp(13, "D", 0.55), 0.30)
+        self.assertAlmostEqual(self.app._apply_high_speed_ramp(15, "D", 0.55), 0.45)
+        level_three_at = 13 + 10 / 3
         self.assertAlmostEqual(self.app._apply_high_speed_ramp(level_three_at, "D", 0.55), 0.55)
         self.assertAlmostEqual(self.app._apply_high_speed_ramp(level_three_at, "D", 0.85), 0.55)
         self.assertAlmostEqual(self.app._apply_high_speed_ramp(level_three_at + 2, "D", 0.85), 0.70)
@@ -295,11 +295,11 @@ class TeleopSafety(unittest.TestCase):
 
     def test_level_changes_continue_from_current_command(self):
         self.app._apply_high_speed_ramp(10, "D", 0.15)
-        self.app._apply_high_speed_ramp(11, "D", 0.15)
-        self.assertAlmostEqual(self.app._apply_high_speed_ramp(11, "D", 0.85), 0.15)
-        self.assertAlmostEqual(self.app._apply_high_speed_ramp(12, "D", 0.85), 0.30)
-        self.assertAlmostEqual(self.app._apply_high_speed_ramp(13, "D", 0.85), 0.375)
-        self.assertAlmostEqual(self.app._apply_high_speed_ramp(13, "D", 0.15), 0.15)
+        self.app._apply_high_speed_ramp(11.5, "D", 0.15)
+        self.assertAlmostEqual(self.app._apply_high_speed_ramp(11.5, "D", 0.85), 0.15)
+        self.assertAlmostEqual(self.app._apply_high_speed_ramp(13, "D", 0.85), 0.30)
+        self.assertAlmostEqual(self.app._apply_high_speed_ramp(14, "D", 0.85), 0.375)
+        self.assertAlmostEqual(self.app._apply_high_speed_ramp(14, "D", 0.15), 0.15)
 
     def test_release_brake_and_estop_cut_throttle_then_restart_from_zero(self):
         for action in ("release", "brake", "estop", "disable"):
@@ -311,7 +311,7 @@ class TeleopSafety(unittest.TestCase):
                 self.app.level = 0.85
                 self.app._reset_high_speed_ramp()
                 self.app._compute_drive(10, True, False, 0)
-                self.assertAlmostEqual(self.app._compute_drive(13, True, False, 0)[0], 0.375)
+                self.assertAlmostEqual(self.app._compute_drive(13, True, False, 0)[0], 0.30)
                 self.app.estop = action == "estop"
                 self.app.drive_enabled = action != "disable"
                 result = self.app._compute_drive(13.1, action != "release", False,
@@ -330,7 +330,7 @@ class TeleopSafety(unittest.TestCase):
         self.assertIsNone(self.app.ramp_last_at)
         self.app.telem["tm"] = 1
         self.assertEqual(self.app._compute_drive(12, True, False, 0)[0], 0)
-        self.assertAlmostEqual(self.app._compute_drive(12.5, True, False, 0)[0], 0.075)
+        self.assertAlmostEqual(self.app._compute_drive(12.5, True, False, 0)[0], 0.05)
 
     def test_held_reverse_resumes_without_a_second_press(self):
         self.ready()

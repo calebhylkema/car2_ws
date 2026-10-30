@@ -2,9 +2,9 @@
 
 Teensy 4.1 firmware and a Windows keyboard controller for the `car2` drive-by-wire test vehicle.
 
-## Current working source — 2026-10-23
+## Current working source — 2026-10-30
 
-Use [the current handoff source and instructions](handoffs/2026-10-20-vehicle-control-and-steering-tuning/README.md). The operator approved the current working version; remaining work is **tuning and brake**. The root-level firmware and the older notes below describe earlier versions.
+Use [the current handoff source and instructions](handoffs/2026-10-20-vehicle-control-and-steering-tuning/README.md). The 2026-10-23 published baseline has 2026-10-30 host tuning awaiting vehicle testing; remaining work is **tuning and brake**. The root-level firmware and the older notes below describe earlier versions.
 
 ## Earlier status
 

@@ -153,8 +153,8 @@
     },
     {
       "path": "car2_ws/teleop/keyboard_teleop_wasd_guarded.py",
-      "bytes": 21824,
-      "sha256": "c6a0840a44bd815d8a2875ea30114e00d46aaaa8e422f945254cc84d9355043c"
+      "bytes": 21820,
+      "sha256": "c2a04b2fe3352f3c5c1eecda7d81694741a7a97fd79d58fa20bed4da195eb690"
     },
     {
       "path": "car2_ws/teleop/teensy_serial.py",
@@ -243,8 +243,8 @@
     },
     {
       "path": "car2_ws/tests/test_teleop_safety.py",
-      "bytes": 19998,
-      "sha256": "56d67074b7977e7cd9f691665d9064db15cf724a13d94f6cea36b31a598adf0d"
+      "bytes": 19984,
+      "sha256": "cd40674c9e61f70e3c5e40c2d950d1906305e3202eaec75481ef8e1368d390ab"
     },
     {
       "path": "car2_ws/tests/vehicle_pair_regression.cpp",
@@ -573,8 +573,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 14157,
-      "sha256": "4bb3ccef1e86f58a3b9538f035d63e24e9190b52cb21377992ff7ddac61a8a6b"
+      "bytes": 14413,
+      "sha256": "831746a90deb0c4d9b03b24b8db47a9db19418ce42eae0942dbc41c19b4d35fa"
     },
     {
       "path": "requirements.txt",
@@ -644,7 +644,7 @@
   ],
   "hardwareActionsDuringPublication": false,
   "automaticCenteringEnabled": false,
-  "sourceUpdatedPacific": "2026-10-23",
+  "sourceUpdatedPacific": "2026-10-30",
   "remainingWork": [
     "tuning",
     "brake"

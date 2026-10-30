@@ -18,10 +18,10 @@ Controls:
 
 The controller starts in E-STOP. Physically straighten the wheels and press Z
 at every startup, then E to clear E-STOP and Q to enable driving.
-All speed levels ramp from zero: 15 percentage points per second up
+All speed levels ramp from zero: 10 percentage points per second up
 to 30%, then the configurable upper throttle rate (default 7.5 points/second).
 Holding A/D builds steering over 1 second from center to full travel;
-releasing it returns from full travel to center over 1.5 seconds.
+releasing it returns from full travel to center over 2 seconds.
 
 Throttle is inhibited until telemetry confirms the requested gear. A direction
 change commands Neutral and full brake, waits for confirmed Neutral, and
@@ -46,11 +46,11 @@ from teensy_serial import VehicleActuator
 DEFAULT_SPEED_LEVELS = (0.15, 0.30, 0.55, 0.85)
 DEFAULT_STEER_TRIM = 0.0
 DEFAULT_STEER_STEP = 1.0 / 60.0
-STEER_RETURN_RATE = 1.0 / 1.5
+STEER_RETURN_RATE = 1.0 / 2.0
 MAX_STEER_TRIM = 0.50
 DEFAULT_HIGH_SPEED_RAMP_RATE = 0.075
 DEFAULT_DIRECTION_CHANGE_BRAKE_S = 0.5
-LOW_SPEED_RAMP_RATE = 0.15
+LOW_SPEED_RAMP_RATE = 0.10
 LOW_SPEED_RAMP_THRESHOLD = 0.30
 GEAR_CODES = {"N": 0, "D": 1, "S": 2, "R": 3}
 
@@ -493,7 +493,7 @@ def main():
                         metavar="L1,L2,L3,L4",
                         help="four increasing normalized throttle levels")
     parser.add_argument("--steer-step", type=positive_float, default=DEFAULT_STEER_STEP,
-                        help="60 Hz equivalent steering increment; default 1s center-to-full, 1.5s return")
+                        help="60 Hz equivalent steering increment; default 1s center-to-full, 2s return")
     parser.add_argument("--disable-manual-reference", action="store_true",
                         help="start with Z disabled; F2 can enable it while in E-stop")
     parser.add_argument("--steer-trim", type=float, default=DEFAULT_STEER_TRIM,

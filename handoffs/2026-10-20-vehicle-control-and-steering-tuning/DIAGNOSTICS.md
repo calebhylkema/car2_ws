@@ -53,3 +53,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Flash-Node.ps1 -Role
 ```
 
 The firmware sources also retain CAN pair, USB steering jog, and brake bench diagnostics. They are isolated commissioning tools, not substitutes for matched normal firmware. The bench brake source is not part of default builds; check direction, feedback, mechanical travel and power isolation before using it. Normal brake software feedback/command status is not proof of loaded stopping performance.
+
+## Brake hold diagnostic — 2026-11-02
+
+The temporary PlatformIO `brake_bench` environment now builds `BRAKE_USB_HOLD_TEST_V1`, not the earlier timed-pulse test. Normal driving uses the `brake` environment.
+
+After installing `brake_bench` on the physically identified brake Teensy, close serial monitors and run from this handoff folder, replacing COM3 with the confirmed current brake port:
+
+```powershell
+& .\.venv\Scripts\python.exe .\car2_ws\teleop\brake_usb_hold_test.py --port COM3
+```
+
+Hold A or Space to extend/apply (GPIO18); hold R to retract/release (GPIO19). Releasing the key stops motion. X stops and Esc exits. Conflicting apply/release keys stop motion. The helper sends held-key updates; a serial monitor alone cannot provide key-release events. Firmware starts stopped, uses continuous full-duty drive, stops at measured raw74/raw564 travel limits, and stops after 150 ms without commands. The endpoint latch prevents repeated drive into a reached limit while the same direction remains held.
+
+This diagnostic ignores CAN and is not normal vehicle firmware. Restore the current `brake` environment for car operation: it uses raw74 released and **provisional raw277 full braking**, not the diagnostic raw564 travel limit. Normal control retains existing E-stop/watchdog brake application. The physical brake test values do not establish loaded stopping force.

@@ -3,48 +3,39 @@
 // Receives brake commands on CAN 0x300, drives a linear actuator through an
 // H-bridge (RPWM/LPWM) with analog position feedback, and reports on CAN 0x301.
 //
-// Design highlights (see DESIGN.md §4):
-//   - proportional closed-loop position control with a deadband (not bang-bang);
-//     large errors still command full PWM, so full-brake application stays fast
-//   - feedback is filtered (EMA) for the control loop, not just for status
-//   - fail-safe (estop / stale command / rejected frame) = FULL brake applied
-//   - command frames validated by the shared E2E layer (dbw_can.h)
+// Continuous full-duty drive toward the CAN-requested feedback position.
+// Stops within the target deadband; no pulse timer, cooldown or PWM ramp-down.
+// Existing protected CAN frames, telemetry and E-stop/watchdog apply behavior remain.
+// Full-brake position is provisional and must be retuned if vehicle testing requires it.
 //
-// Installed motor polarity: pin 18 retracts/releases, pin 19 extends/applies,
-// and position feedback on A0 decreases as the actuator extends. The measured
-// endpoints are 945 released and 745 at the installed mechanical apply limit;
-// normal control stops at 755 to retain a small apply-side safety margin.
+// Installed motor polarity: pin 19 retracts/releases, pin 18 extends/applies,
+// and position feedback on A0 increases as the actuator extends. On 2026-11-02
+// the operator measured raw74 released, first grab around127-135, and raw277
+// firmly applied. Raw564 is the reported full-travel endpoint, not the brake target.
 
 #include <Arduino.h>
 #include "dbw_can.h"
 
 // ----------------------------- Configuration -----------------------------
 namespace cfg {
-    constexpr uint8_t  PIN_RETRACT = 18; // retract actuator, release brake
-    constexpr uint8_t  PIN_EXTEND  = 19; // extend actuator, apply brake
+    constexpr uint8_t  PIN_RETRACT = 19; // retract actuator, release brake
+    constexpr uint8_t  PIN_EXTEND  = 18; // extend actuator, apply brake
     constexpr uint8_t  PIN_FBK     = A0; // potentiometer wiper
 
-    constexpr int      ADC_RELEASED = 945;   // measured full retract / brake off
-    constexpr int      ADC_APPLIED_LIMIT = 745; // installed mechanical maximum
-    constexpr int      ADC_APPLIED  = 755;   // commanded maximum with 10-count margin
+    constexpr int      ADC_RELEASED = 74;    // measured full retract / brake off
+    constexpr int      ADC_APPLIED_LIMIT = 564; // reported full actuator travel
+    constexpr int      ADC_APPLIED  = 277;   // PROVISIONAL full-brake target; retune this value
     constexpr float    STROKE_IN     = 2.0f; // for status reporting only
 
     constexpr int      DEADBAND_ADC  = 4;    // stop band around target
-    constexpr float    KP            = 6.0f; // PWM per ADC count of error
-    constexpr uint8_t  PWM_MIN       = 70;   // break-away duty (overcome stiction)
     constexpr uint8_t  PWM_MAX       = 255;  // full duty
     constexpr float    PWM_FREQUENCY_HZ = 20000.0f; // above audible range
-    constexpr float    FBK_ALPHA     = 0.30f;// EMA smoothing factor
 
     constexpr uint32_t CONTROL_PERIOD_MS = 5;    // 200 Hz control loop
     constexpr uint32_t STATUS_PERIOD_MS  = 100;  // 10 Hz status TX
     constexpr uint32_t WATCHDOG_MS       = 100;  // tightest budget (brake first)
 
-    // Calibration: drive the actuator extend<->retract while printing raw ADC,
-    // so we can read car2's true released/applied endpoints. Set false when done.
-    constexpr bool     BRAKE_CAL   = false;  // normal operation
-    constexpr uint32_t CAL_HALF_MS = 3000;   // drive each direction 3 s
-    constexpr uint8_t  CAL_PWM     = 255;    // FULL drive (12 V) to rule out weak-drive
+
 }
 
 enum : uint8_t { MOTION_EXTEND = 7, MOTION_RETRACT = 8, MOTION_STOP = 9 };
@@ -55,7 +46,7 @@ DbwRxState rx;
 
 static bool  cmd_estop = true;     // start safe (brake applied)
 static float cmd_brake = 1.0f;     // normalized 0..1
-static float fbk_filt  = (float)cfg::ADC_RELEASED;
+static int feedback_raw = cfg::ADC_RELEASED;
 static uint8_t motion  = MOTION_STOP;
 static uint8_t pwm_mag = 0;
 
@@ -82,9 +73,7 @@ static void stopMotor() {
 
 // ------------------------------ Control ----------------------------------
 static void controlStep() {
-    // Filter feedback.
-    const int raw = analogRead(cfg::PIN_FBK);
-    fbk_filt += (float)((float)raw - fbk_filt) * cfg::FBK_ALPHA;
+    feedback_raw = analogRead(cfg::PIN_FBK);
 
     // Target: full brake on any unsafe condition, else the commanded level.
     const bool  safe   = cmd_estop || stale;
@@ -92,7 +81,7 @@ static void controlStep() {
     const float targetADC =
         (float)cfg::ADC_RELEASED + (float)(cfg::ADC_APPLIED - cfg::ADC_RELEASED) * target;
 
-    const float error = targetADC - fbk_filt;
+    const float error = targetADC - feedback_raw;
 
     if (fabsf(error) <= (float)cfg::DEADBAND_ADC) {
         stopMotor();
@@ -101,14 +90,10 @@ static void controlStep() {
         return;
     }
 
-    // Proportional magnitude, clamped to [break-away, full].
-    float mag = fabsf(error) * cfg::KP;
-    if (mag < (float)cfg::PWM_MIN) mag = (float)cfg::PWM_MIN;
-    if (mag > (float)cfg::PWM_MAX) mag = (float)cfg::PWM_MAX;
-    pwm_mag = (uint8_t)mag;
+    pwm_mag = cfg::PWM_MAX; // same continuous full drive as the verified USB test
 
-    // Feedback decreases as the actuator extends, so a negative error applies.
-    const bool extend = (error < 0.0f);
+    // Feedback increases as the actuator extends, so a positive error applies.
+    const bool extend = (error > 0.0f);
     driveMotor(pwm_mag, extend);
     motion = extend ? MOTION_EXTEND : MOTION_RETRACT;
 }
@@ -130,17 +115,17 @@ static void handleCan() {
 }
 
 static void sendStatus() {
-    const int raw = (int)(fbk_filt + 0.5f);
+    const int raw = feedback_raw;
 
-    float inches = (fbk_filt - (float)cfg::ADC_RELEASED) * cfg::STROKE_IN /
-                   (float)(cfg::ADC_APPLIED - cfg::ADC_RELEASED);
+    float inches = (feedback_raw - (float)cfg::ADC_RELEASED) * cfg::STROKE_IN /
+                   (float)(cfg::ADC_APPLIED_LIMIT - cfg::ADC_RELEASED);
     if (inches < 0.0f)             inches = 0.0f;
     if (inches > cfg::STROKE_IN)   inches = cfg::STROKE_IN;
     const int16_t lenCenti = (int16_t)lroundf(inches * 100.0f);
 
     uint8_t flags = 0u;
-    if (raw >= cfg::ADC_RELEASED - cfg::DEADBAND_ADC) flags |= 0x01u;  // near released
-    if (raw <= cfg::ADC_APPLIED  + cfg::DEADBAND_ADC) flags |= 0x02u;  // near applied
+    if (raw <= cfg::ADC_RELEASED + cfg::DEADBAND_ADC) flags |= 0x01u;  // near released
+    if (raw >= cfg::ADC_APPLIED  - cfg::DEADBAND_ADC) flags |= 0x02u;  // near applied
     if (stale)     flags |= 0x04u;
     if (cmd_estop) flags |= 0x08u;
 
@@ -158,33 +143,6 @@ static void sendStatus() {
     can.write(m);
 }
 
-// --------------------------- Calibration ---------------------------------
-// Oscillates extend/retract and prints the raw ADC with running min/max so we
-// can read the true endpoints on car2. Watch for stall/heat at the ends.
-static void runBrakeCal(uint32_t now) {
-    static uint32_t t0 = 0;
-    static bool extending = true;
-    static int adc_min = 1023, adc_max = 0;
-
-    if (now - t0 >= cfg::CAL_HALF_MS) {
-        t0 = now;
-        extending = !extending;
-    }
-    driveMotor(cfg::CAL_PWM, extending);
-
-    static uint32_t last_p = 0;
-    if (now - last_p >= 100) {
-        last_p = now;
-        const int raw = analogRead(cfg::PIN_FBK);
-        if (raw < adc_min) adc_min = raw;
-        if (raw > adc_max) adc_max = raw;
-        Serial.print("BRAKE CAL dir="); Serial.print(extending ? "EXTEND " : "RETRACT");
-        Serial.print("  raw=");  Serial.print(raw);
-        Serial.print("  min=");  Serial.print(adc_min);
-        Serial.print("  max=");  Serial.println(adc_max);
-    }
-}
-
 // ------------------------------ Setup/loop -------------------------------
 void setup() {
     Serial.begin(115200);
@@ -198,7 +156,7 @@ void setup() {
     analogReadResolution(10);
     stopMotor();
 
-    fbk_filt = (float)analogRead(cfg::PIN_FBK);
+    feedback_raw = analogRead(cfg::PIN_FBK);
 
     can.begin();
     can.setBaudRate(DBW_CAN_BITRATE);
@@ -208,11 +166,6 @@ void setup() {
 }
 
 void loop() {
-    if (cfg::BRAKE_CAL) {          // calibration mode: oscillate + print raw ADC
-        runBrakeCal(millis());
-        return;
-    }
-
     handleCan();
     // Sample after CAN timestamps the accepted command, including across wrap.
     const uint32_t now = millis();

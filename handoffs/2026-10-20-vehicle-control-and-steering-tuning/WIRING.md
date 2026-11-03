@@ -15,8 +15,8 @@ This is the firmware pin contract and recorded operator wiring, not a continuity
 | Throttle | MCP4725 I2C | 18 SDA / 19 SCL; address 0x62, fallback 0x60 |
 | Throttle | Gear B / C / D | 33 / 34 / 35 |
 | Throttle | Wheel-speed quadrature A / B | 2 / 3 |
-| Brake | H-bridge retract / release | 18 |
-| Brake | H-bridge extend / apply | 19 |
+| Brake | H-bridge retract / release | 19 |
+| Brake | H-bridge extend / apply | 18 |
 | Brake | Actuator position feedback | A0 = 14 |
 
 The CAN module's right screw terminals are **CAN-H and CAN-L**, the differential bus. They do not correspond individually to logic TX/RX on its left header. CAN-H joins every module's H; CAN-L joins every module's L. TXD and RXD are the separate local Teensy-to-transceiver logic connection. No software claim here establishes a specific module's terminal order: read its silkscreen.
@@ -31,7 +31,9 @@ Operational steering speed ceiling is 24000 pulses/s with 51200 pulses/s² accel
 
 Throttle uses MCP4725, not MCP4728: nominal idle 0.80 V, configured full-scale 3.30 V, software throttle ceiling 0.85. Gear pin levels B/C/D: N=H/H/H, D=L/H/H, S=L/H/L, R=H/L/H. The DAC output is the VOTOL EM-70 throttle input; it is not the separate rotary encoder. DAC readback verifies register state, not the measured voltage at the controller or controller enable state. A speed encoder fault and VOTOL motor Hall/commutation wiring are different problems.
 
-Brake constants are ADC945 released, ADC755 commanded applied, ADC745 recorded mechanical maximum, 10-count margin. These are car-specific calibration values, not a guarantee of stopping force.
+Manual USB pulses on 2026-11-02 confirmed GPIO19 retracts/releases and GPIO18 extends/applies. The operator measured raw74 released, first grab around127-135, raw277 firmly applied, and raw564 at full actuator travel. Feedback increases during application.
+
+Brake constants are ADC74 released, ADC277 commanded applied, and ADC564 reported full actuator travel. Normal control uses continuous full-duty drive in the released-to-working-applied range, with a 4-count stopping deadband. ADC_APPLIED=277 is provisional; retune after checking actual braking. There is no diagnostic pulse/cooldown in normal control. Length telemetry estimates nominal actuator travel using the full74-564 span. These are car-specific position values, not a guarantee of stopping force.
 
 ## Protocol compatibility
 

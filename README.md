@@ -2,7 +2,7 @@
 
 Teensy 4.1 firmware and Windows keyboard control for the `car2` project car.
 
-## Current source — 2026-10-30
+## Current source — 2026-11-03
 
 Use [the current source, setup, and operating instructions](handoffs/2026-10-20-vehicle-control-and-steering-tuning/README.md).
 The active project is inside:
@@ -45,7 +45,7 @@ Every level starts from zero command when W/S is reapplied. The command rises at
 
 Changing levels while holding the same direction continues from the current command. From settled level 2 to 3 takes about **3.3 seconds**; level 3 to 4 takes **4 seconds**. Selecting a lower level reduces the command promptly. Throttle release, braking, E-stop, or an inhibited drive state resets the ramp.
 
-These are throttle-command percentages and timings, not measured motor power, torque, or vehicle speed. The 2026-10-30 ramp and steering-return updates passed all **37 host tests**; vehicle testing is pending. Restart teleop to use them; these two host changes require **no Teensy reflash**.
+These are throttle-command percentages and timings, not measured motor power, torque, or vehicle speed. The operator reported the current brake, throttle, steering, and acceleration changes working and approved publication on **2026-11-03**. Offline checks pass: **40 host tests** and **14 firmware/mock executables**. Loaded brake performance remains to be validated. Restart teleop to use them; these two host changes require **no Teensy reflash**.
 
 ## Direction changes and CAN feedback
 
@@ -62,4 +62,4 @@ The operational PlatformIO environments are **master, throttle, steer, and brake
 - [Steering sensor validation notes](handoffs/2026-10-20-vehicle-control-and-steering-tuning/STEERING-TUNING-NEXT.md)
 - [Validation and limits of recorded evidence](handoffs/2026-10-20-vehicle-control-and-steering-tuning/VALIDATION.md)
 
-Remaining work includes **brake tuning/validation and steering encoder integration**. The current steering firmware reports the analog sensor reading but does not use it for position correction; normal steering uses manually referenced step counts.
+The 2026-11-02 brake update uses continuous full-duty drive with GPIO18 apply and GPIO19 release, raw74 released, and a **provisional raw277 full-brake target**. It stops at the requested position; normal CAN/Space control is retained. Retune ADC_APPLIED in the active brake.cpp as needed. Remaining work includes **brake tuning/validation and steering encoder integration**. The current steering firmware reports the analog sensor reading but does not use it for position correction; normal steering uses manually referenced step counts.

@@ -78,13 +78,13 @@
     },
     {
       "path": "car2_ws/firmware/teensys/brake.cpp",
-      "bytes": 9042,
-      "sha256": "c50c993cec3bce47c5454c32327ae76de8925669bd526f33e59af992e163041c"
+      "bytes": 6903,
+      "sha256": "5503ebd4d0f42d83939bbf5bbdfbf9fa63114d9233dfb16234f1939c233eab5f"
     },
     {
       "path": "car2_ws/firmware/teensys/brake_bench_test.cpp",
-      "bytes": 4056,
-      "sha256": "731f43da6ca37f9c4d0c10bb65d3c40a5c905dbfc898167e53c5f41783965b17"
+      "bytes": 3082,
+      "sha256": "0876461c963b6e81f871651940b14e25ebd23ec9c1c7169555618023096fa41c"
     },
     {
       "path": "car2_ws/firmware/teensys/can_bus_test.cpp",
@@ -263,8 +263,8 @@
     },
     {
       "path": "DIAGNOSTICS.md",
-      "bytes": 4437,
-      "sha256": "24caeafc40c982c7e0763b07cab6200fbcc6ee474ef34a339674ebf482b5ffeb"
+      "bytes": 5816,
+      "sha256": "e37281daffe958cf94cd079e35b893a06bcc4c2786c3752905eb4a550a1c9250"
     },
     {
       "path": "evidence/diagnostic-builds-20261020.log",
@@ -573,8 +573,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 14413,
-      "sha256": "831746a90deb0c4d9b03b24b8db47a9db19418ce42eae0942dbc41c19b4d35fa"
+      "bytes": 15063,
+      "sha256": "258db5c8957f3963277265f3eea2636849720fa75d23b99751d5fffaf72172c9"
     },
     {
       "path": "requirements.txt",
@@ -618,8 +618,8 @@
     },
     {
       "path": "WIRING.md",
-      "bytes": 5568,
-      "sha256": "cec86460889f86ad0655de30726b77df39a2e654e472a332022cf8c07dee516b"
+      "bytes": 6139,
+      "sha256": "6ea665cfc100633309572399c4bd50bb16df29ddd5bd05ec52737f85e9f351ae"
     },
     {
       "path": "work/read_steering_status.py",
@@ -633,18 +633,28 @@
     },
     {
       "path": "car2_ws/tests/brake_bench_regression.cpp",
-      "bytes": 575,
-      "sha256": "b8b882314ccc50e3a06ab2d9809296655589e347c5e814b94c7e37e911b46384"
+      "bytes": 1375,
+      "sha256": "817ab4c9cb1a5a3b5065f1da9a740982303139f16cedccad7809d6d39e8337b5"
     },
     {
       "path": "car2_ws/tests/brake_regression.cpp",
-      "bytes": 965,
-      "sha256": "0648f7095b1e7699fd10d863a4946cdad0b9396304fc8419b904333ff2a5a35c"
+      "bytes": 3041,
+      "sha256": "29be5535e2ebf173c7f9e79871c8c2c9f1a699423100ba26f38a6a623427ce26"
+    },
+    {
+      "path": "car2_ws/teleop/brake_usb_hold_test.py",
+      "bytes": 2528,
+      "sha256": "4d531fe408c417fb87c9355a6b747fb03068a71f817c93ffc13b23147e13a22d"
+    },
+    {
+      "path": "car2_ws/tests/test_brake_usb_hold.py",
+      "bytes": 834,
+      "sha256": "9edb1b1ba761d9042ec3a1425e45cf5c2b051470a60c531d8e0b814afffa139c"
     }
   ],
   "hardwareActionsDuringPublication": false,
   "automaticCenteringEnabled": false,
-  "sourceUpdatedPacific": "2026-10-30",
+  "sourceUpdatedPacific": "2026-11-02",
   "remainingWork": [
     "tuning",
     "brake"
